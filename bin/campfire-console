@@ -1,0 +1,181 @@
+#! /usr/bin/env ruby
+require 'rubygems'
+require 'tinder'
+require 'yajl/http_stream'
+
+# extend Tinder::Room so we can get users by their user_id (which the new Streaming API provides)
+# http://developer.37signals.com/campfire/streaming
+module Tinder
+  class Room
+    def __users
+      @__users ||= __users!
+    end
+
+    def __users!
+      @__users = connection.get("/room/#{@id}.json")['room']['users']
+    end
+
+    def __get_user id
+      return unless id
+      user = __users.detect  { |user| user['id'] == id }
+      user = __users!.detect { |user| user['id'] == id } unless user
+      user
+    end
+  end
+end
+
+# whether or not to use popup notifications
+$popup = true
+
+rc_file = File.expand_path '~/.camfire-consolerc'
+
+if File.file? rc_file
+  options = YAML.load_file(rc_file)
+else
+  options = {}
+
+  print "API Token: "
+  options[:token] = gets.strip
+
+  print "Subdomain: "
+  options[:subdomain] = gets.strip
+
+  print "Use SSL?  [y]/n"
+  options[:use_ssl] = gets.downcase.include?('n') ? false : true
+
+  File.open(rc_file, 'w'){|f| f << options.to_yaml }
+  puts "Saved configuration to #{ rc_file }"
+end
+
+$campfire = Tinder::Campfire.new options[:subdomain], :ssl => options[:use_ssl]
+login_ok = $campfire.login options[:token], 'x'
+
+puts "Login: #{ login_ok }"
+exit unless login_ok
+
+begin
+  rooms = $campfire.rooms
+rescue NoMethodError
+  puts "Didn't login properly?"
+  exit
+end
+
+puts "Joining rooms"
+rooms.each do |room|
+  puts "- #{ room.name }"
+  room.join
+end
+
+def done
+  puts "logout #{ $campfire.logout }"
+  puts "exiting"
+end
+
+trap 'INT' do
+  done
+  exit
+end
+
+def new_message message
+  begin
+
+    room = $campfire.rooms.detect {|room| room.id == message['room_id'] }
+
+    if room and message['body'] and message['user_id']
+      if user = room.__get_user(message['user_id'])
+
+        room_name     = room.name
+        user_name     = user['name']
+        text          = message['body']
+        user_and_text = "#{ user_name }: #{ text }"
+
+        puts "[#{ room_name }] #{ user_and_text }"
+        `notify-send #{ room_name.inspect } #{ user_and_text.inspect }` if $popup
+      end
+    end
+
+  rescue Exception => ex
+    puts ex.inspect
+  end
+end
+
+puts "Listening for new messages ..."
+threads = rooms.map do |room|
+
+  Thread.new do 
+    # can't get room.listen to work for multiple rooms so we read the HttpStream directly
+    url = URI.parse("http://#{ options[:token] }:x@streaming.campfirenow.com//room/#{ room.id }/live.json")
+    Yajl::HttpStream.get(url) do |message|
+      new_message message
+    end
+  end
+
+end
+
+puts ""
+puts "To send a message:"
+puts "  Dev Fu: hello there (where Dev Fu is the room name)"
+puts ""
+while true
+  command = gets.strip
+  
+  case command
+
+  when 'disable'
+    $popup = false
+
+  when 'enable'
+    $popup = true
+
+  when 'clear'
+    system 'clear'
+
+  when 'exit'
+    done
+    exit
+
+  when /^history: ([\w\s]+)/i
+    room_name  = $1
+    room       = $campfire.rooms.detect {|room| room.name.downcase == room_name }
+    transcript = room.transcript Date.today if room
+    if transcript
+      transcript.each do |message|
+        body = message[:message]
+        if body
+          user = room.__get_user(message[:user_id])
+          if user
+            puts "#{ user['name'] }: #{ body }"
+          end
+        end
+      end
+    end
+
+  when /^yesterday: ([\w\s]+)/i
+    room_name  = $1
+    room       = $campfire.rooms.detect {|room| room.name.downcase == room_name }
+    transcript = room.transcript Date.yesterday if room
+    if transcript
+      transcript.each do |message|
+        body = message[:message]
+        if body
+          user = room.__get_user(message[:user_id])
+          if user
+            puts "#{ user['name'] }: #{ body }"
+          end
+        end
+      end
+    end
+
+  else
+    if command =~ /([\w\s]+): (.*)/
+      room_name = $1
+      message   = $2
+
+      room = $campfire.rooms.detect {|room| room.name.downcase == room_name }
+      if room
+        room.speak message
+      end
+
+    end
+  end
+end

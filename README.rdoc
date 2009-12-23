@@ -1,0 +1,9 @@
+= CampfireConsole
+
+Little simple interactive command-line console campfire client.
+
+No installation / usage instructions at the moment.
+
+I'll likely create some specs and gem-ify this and add some documentation sometime later ...
+
+Right now, it's just 1 big old-school procedural script.
