@@ -27,7 +27,7 @@ end
 # whether or not to use popup notifications
 $popup = true
 
-rc_file = File.expand_path '~/.camfire-consolerc'
+rc_file = File.expand_path '~/.campfire-consolerc'
 
 if File.file? rc_file
   options = YAML.load_file(rc_file)
@@ -47,24 +47,33 @@ else
   puts "Saved configuration to #{ rc_file }"
 end
 
-$campfire = Tinder::Campfire.new options[:subdomain], :ssl => options[:use_ssl]
-login_ok = $campfire.login options[:token], 'x'
-
-puts "Login: #{ login_ok }"
-exit unless login_ok
+$campfire = Tinder::Campfire.new options[:subdomain], :ssl => options[:use_ssl], :token => options[:token]
 
 begin
   rooms = $campfire.rooms
-rescue NoMethodError
-  puts "Didn't login properly?"
+rescue Tinder::AuthenticationFailed
+  puts "Login failed. Check API key in ~/.campfire-consolerc"
   exit
 end
 
-puts "Joining rooms"
+puts "Available rooms:"
 rooms.each do |room|
   puts "- #{ room.name }"
-  room.join
 end
+
+print "Enter room name: "
+room_name = gets.strip
+
+room_to_join = rooms.detect {|room| room.name == room_name}
+
+if room_to_join
+  puts "Joining room #{room_to_join.name}."
+  room_to_join.join
+else
+  puts "No room found."
+  exit(1)
+end
+
 
 def done
   puts "logout #{ $campfire.logout }"
